@@ -16,38 +16,33 @@
 
 import time
 import random
+import random   
 import numpy as np
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-
 import matplotlib.pyplot as plt
-
-
 # =========================
 # CONFIG（学生可改：训练参数）
 # =========================
 CONFIG = {
     # 固定随机种子：方便对比（同参数下结果更稳定）
     "seed": 42,
-
     # 选择要训练的模型： "mlp" 或 "cnn"
     "model": "mlp",
 
     # 训练相关参数（可以改，用于观察收敛与精度变化）
     "epochs": 10,
+    "epochs": 15,
     "batch_size": 64,
     "lr": 1e-3,             # 建议对比：1e-2 / 1e-3 / 1e-4
     "optimizer": "adam",    # "adam" 或 "sgd"
-
     # 输出
     "save_plot": True,
     "plot_path": "results.png",
 }
-
-
 # =========================
 # 工具函数
 # =========================
@@ -59,73 +54,52 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-
 def count_params(model: nn.Module) -> int:
     """统计可训练参数量（衡量模型复杂度）"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 def build_optimizer(cfg, model):
     """根据配置创建优化器"""
     lr = cfg["lr"]
     opt = cfg["optimizer"].lower()
-
     if opt == "adam":
         return torch.optim.Adam(model.parameters(), lr=lr)
     elif opt == "sgd":
         return torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
     else:
         raise ValueError("CONFIG['optimizer'] must be 'adam' or 'sgd'")
-
-
 def train_one_epoch(model, loader, optimizer, device):
     """训练一个 epoch，返回平均 train loss"""
     model.train()
     ce = nn.CrossEntropyLoss()
-
     total_loss = 0.0
     total = 0
-
     for x, y in loader:
         x, y = x.to(device), y.to(device)
-
         optimizer.zero_grad()
         logits = model(x)
         loss = ce(logits, y)
         loss.backward()
         optimizer.step()
-
         total_loss += loss.item() * x.size(0)
         total += x.size(0)
-
     return total_loss / total
-
-
 @torch.no_grad()
 def evaluate(model, loader, device):
     """在测试集评估，返回 test loss 和 test accuracy"""
     model.eval()
     ce = nn.CrossEntropyLoss()
-
     total_loss = 0.0
     correct = 0
     total = 0
-
     for x, y in loader:
         x, y = x.to(device), y.to(device)
-
         logits = model(x)
         loss = ce(logits, y)
-
         total_loss += loss.item() * x.size(0)
         pred = logits.argmax(dim=1)
         correct += (pred == y).sum().item()
         total += y.size(0)
-
     return total_loss / total, correct / total
-
-
 # =========================
 # 模型定义：BP(MLP)
 # =========================
@@ -136,10 +110,8 @@ class MLP(nn.Module):
     - 先 Flatten 成向量 [B, 784]
     - 再走全连接层做分类
     """
-
     def __init__(self):
         super().__init__()
-
         # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
         # ★★★★★ 修改区（MLP 网络结构参数）★★★★★
         # 目标：通过修改隐藏层的“层数/每层神经元数”，观察准确率变化
@@ -163,26 +135,25 @@ class MLP(nn.Module):
 
         self.fc1 = nn.Linear(28 * 28, 256)   # 改这里：例如 128 / 256 / 512
         self.fc2 = nn.Linear(256, 128)       # 改这里：例如 64 / 128 / 256
+        self.fc1 = nn.Linear(28 * 28, 512)   # 改这里：例如 128 / 256 / 512
+        self.fc2 = nn.Linear(512, 256)       # 改这里：例如 64 / 128 / 256
         # 如需增加第三个隐藏层，可新增 fc3，并把最后输出层改名
+        self.fc3 = nn.Linear(256, 128)       # 新增第三个隐藏层
         self.out = nn.Linear(128, 10)        # 最后一层输出固定 10 类（0~9）
 
         # 激活函数（通常用 ReLU）
         self.relu = nn.ReLU()
-
-
     def forward(self, x):
         # x: [B, 1, 28, 28]
         # MLP 必须 Flatten： [B, 784]
         x = x.view(x.size(0), -1)
-
         x = self.relu(self.fc1(x))
         # x = self.drop(x)  # 若启用 Dropout
         x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))  # 新增层的前向传播
         # x = self.drop(x)
         x = self.out(x)
         return x
-
-
 # =========================
 # 模型定义：CNN
 # =========================
@@ -192,10 +163,8 @@ class SimpleCNN(nn.Module):
     - 输入保持图像结构：[B, 1, 28, 28]
     - 通过卷积提取局部特征（边缘、拐角、笔画组合）
     """
-
     def __init__(self):
         super().__init__()
-
         # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
         # ★★★★★ 修改区（CNN 网络结构参数）★★★★★
         # 目标：通过修改卷积通道数/全连接层大小，观察准确率变化
@@ -224,16 +193,19 @@ class SimpleCNN(nn.Module):
 
         c1_out = 16   # 改这里：8 / 16 / 32
         c2_out = 32   # 改这里：16 / 32 / 64
+        c1_out = 32   # 改这里：8 / 16 / 32
+        c2_out = 64   # 改这里：16 / 32 / 64
 
         self.conv1 = nn.Conv2d(1, c1_out, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(c1_out, c2_out, kernel_size=3, padding=1)
-
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool2d(2)  # 2x2 池化，尺寸减半
 
         # 全连接层：输入是 c2_out * 7 * 7
         self.fc1 = nn.Linear(c2_out * 7 * 7, 128)  # 可以改 128 -> 256 试试
         self.fc2 = nn.Linear(128, 10)
+        self.fc1 = nn.Linear(c2_out * 7 * 7, 256)  # 可以改 128 -> 256 试试
+        self.fc2 = nn.Linear(256, 10)
 
     def forward(self, x):
         # x: [B, 1, 28, 28]  (CNN 不需要 Flatten 输入)
@@ -243,8 +215,6 @@ class SimpleCNN(nn.Module):
         x = self.relu(self.fc1(x))
         x = self.fc2(x)
         return x
-
-
 def build_model(model_name: str) -> nn.Module:
     if model_name == "mlp":
         return MLP()
@@ -252,29 +222,25 @@ def build_model(model_name: str) -> nn.Module:
         return SimpleCNN()
     else:
         raise ValueError("CONFIG['model'] must be 'mlp' or 'cnn'")
-
-
 # =========================
 # 主程序
 # =========================
 def main():
     set_seed(CONFIG["seed"])
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
     # -------------------------
     # 数据获取（自动下载 MNIST）
     # -------------------------
     # download=True：若本地没有 MNIST，会自动联网下载并解压到 ./data/
     transform = transforms.Compose([transforms.ToTensor()])
-
     train_ds = datasets.MNIST(root="./data", train=True, download=True, transform=transform)
     test_ds  = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
-
     train_loader = DataLoader(
         train_ds,
         batch_size=CONFIG["batch_size"],
         shuffle=True,
         num_workers=2,
+        num_workers=0,
         pin_memory=True
     )
     test_loader = DataLoader(
@@ -282,6 +248,7 @@ def main():
         batch_size=CONFIG["batch_size"],
         shuffle=False,
         num_workers=2,
+        num_workers=0,
         pin_memory=True
     )
 
@@ -290,37 +257,28 @@ def main():
     # -------------------------
     model = build_model(CONFIG["model"]).to(device)
     optimizer = build_optimizer(CONFIG, model)
-
     print("=================================================")
     print(f"Device: {device}")
     print(f"Model:  {CONFIG['model']}")
     print(f"Params: {count_params(model):,}")
     print(f"Epochs: {CONFIG['epochs']} | Batch: {CONFIG['batch_size']} | LR: {CONFIG['lr']} | Opt: {CONFIG['optimizer']}")
     print("=================================================")
-
     # 记录曲线
     train_losses, test_losses, test_accs = [], [], []
-
     start = time.time()
-
     for epoch in range(1, CONFIG["epochs"] + 1):
         tr_loss = train_one_epoch(model, train_loader, optimizer, device)
         te_loss, te_acc = evaluate(model, test_loader, device)
-
         train_losses.append(tr_loss)
         test_losses.append(te_loss)
         test_accs.append(te_acc)
-
         print(f"Epoch {epoch:02d}/{CONFIG['epochs']} | "
               f"train_loss={tr_loss:.4f} | test_loss={te_loss:.4f} | test_acc={te_acc*100:.2f}%")
-
     elapsed = time.time() - start
-
     print("=================================================")
     print(f"Final Test Accuracy: {test_accs[-1]*100:.2f}%")
     print(f"Training Time: {elapsed:.1f}s")
     print("=================================================")
-
     # -------------------------
     # 保存曲线图：loss + acc
     # -------------------------
@@ -336,4 +294,7 @@ def main():
         print(f"Saved plot to: {CONFIG['plot_path']}")
 
 if __name__ == "__main__":
+    main()
+    #调整参数，使得MLP的精度到97.5%以上
+    #调整参数，是的CNN的精度到99%
     main()
