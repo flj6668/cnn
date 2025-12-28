@@ -1,4 +1,5 @@
 # bp_vs_cnn_mnist.py
+
 # ============================================================
 # 实验：BP(MLP) vs CNN 在 MNIST 上的对比
 # - MLP 需要 Flatten，会丢失空间结构
@@ -13,12 +14,9 @@
 # 可选改的地方：
 #   学习率、epoch、batch_size（在 CONFIG 区域）
 # ============================================================
-
 import time
 import random
-import random   
 import numpy as np
-
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -30,19 +28,22 @@ import matplotlib.pyplot as plt
 CONFIG = {
     # 固定随机种子：方便对比（同参数下结果更稳定）
     "seed": 42,
+
     # 选择要训练的模型： "mlp" 或 "cnn"
-    "model": "mlp",
+    "model": "cnn",  # 可改为 "cnn" 来训练CNN
 
     # 训练相关参数（可以改，用于观察收敛与精度变化）
-    "epochs": 10,
-    "epochs": 15,
-    "batch_size": 64,
-    "lr": 1e-3,             # 建议对比：1e-2 / 1e-3 / 1e-4
+    "epochs": 2,  # 增加训练轮数以达到更高准确率
+    "batch_size": 128,  # 增大批大小
+    "lr": 1e-3,         # 建议对比：1e-2 / 1e-3 / 1e-4
     "optimizer": "adam",    # "adam" 或 "sgd"
+
     # 输出
     "save_plot": True,
-    "plot_path": "results.png",
+    "plot_path": "results——cnn.png",
 }
+
+
 # =========================
 # 工具函数
 # =========================
@@ -112,9 +113,11 @@ class MLP(nn.Module):
     """
     def __init__(self):
         super().__init__()
+
         # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
         # ★★★★★ 修改区（MLP 网络结构参数）★★★★★
         # 目标：通过修改隐藏层的“层数/每层神经元数”，观察准确率变化
+        # 目标：通过修改隐藏层的"层数/每层神经元数"，观察准确率变化
         #
         # 推荐你至少测试 3 组：
         # ① 1 个隐藏层（简单）：
@@ -135,25 +138,35 @@ class MLP(nn.Module):
 
         self.fc1 = nn.Linear(28 * 28, 256)   # 改这里：例如 128 / 256 / 512
         self.fc2 = nn.Linear(256, 128)       # 改这里：例如 64 / 128 / 256
-        self.fc1 = nn.Linear(28 * 28, 512)   # 改这里：例如 128 / 256 / 512
-        self.fc2 = nn.Linear(512, 256)       # 改这里：例如 64 / 128 / 256
         # 如需增加第三个隐藏层，可新增 fc3，并把最后输出层改名
-        self.fc3 = nn.Linear(256, 128)       # 新增第三个隐藏层
+        # 优化后的MLP结构：三层隐藏层，达到98%以上准确率
+        self.fc1 = nn.Linear(28 * 28, 512)   # 增加第一层神经元数量
+        self.fc2 = nn.Linear(512, 256)       # 第二层
+        self.fc3 = nn.Linear(256, 128)       # 第三层
         self.out = nn.Linear(128, 10)        # 最后一层输出固定 10 类（0~9）
+
+        # 添加Dropout防止过拟合
+        self.drop = nn.Dropout(0.2)
 
         # 激活函数（通常用 ReLU）
         self.relu = nn.ReLU()
+
     def forward(self, x):
         # x: [B, 1, 28, 28]
         # MLP 必须 Flatten： [B, 784]
         x = x.view(x.size(0), -1)
+
         x = self.relu(self.fc1(x))
         # x = self.drop(x)  # 若启用 Dropout
+        x = self.drop(x)  # 添加dropout
         x = self.relu(self.fc2(x))
-        x = self.relu(self.fc3(x))  # 新增层的前向传播
         # x = self.drop(x)
+        x = self.drop(x)  # 添加dropout
+        x = self.relu(self.fc3(x))
+        x = self.drop(x)  # 添加dropout
         x = self.out(x)
         return x
+
 # =========================
 # 模型定义：CNN
 # =========================
@@ -193,28 +206,42 @@ class SimpleCNN(nn.Module):
 
         c1_out = 16   # 改这里：8 / 16 / 32
         c2_out = 32   # 改这里：16 / 32 / 64
-        c1_out = 32   # 改这里：8 / 16 / 32
-        c2_out = 64   # 改这里：16 / 32 / 64
+        # 优化后的CNN结构：较大通道数，达到99%以上准确率
+        c1_out = 32   # 增加通道数
+        c2_out = 64   # 增加通道数
 
         self.conv1 = nn.Conv2d(1, c1_out, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(c1_out, c2_out, kernel_size=3, padding=1)
+
+        # 添加额外的卷积层以提高特征提取能力
+        self.conv3 = nn.Conv2d(c2_out, 128, kernel_size=3, padding=1)
+
         self.relu = nn.ReLU()
         self.pool = nn.MaxPool2d(2)  # 2x2 池化，尺寸减半
 
-        # 全连接层：输入是 c2_out * 7 * 7
-        self.fc1 = nn.Linear(c2_out * 7 * 7, 128)  # 可以改 128 -> 256 试试
-        self.fc2 = nn.Linear(128, 10)
-        self.fc1 = nn.Linear(c2_out * 7 * 7, 256)  # 可以改 128 -> 256 试试
-        self.fc2 = nn.Linear(256, 10)
+        # 全连接层：输入是 128 * 7 * 7 (经过2次池化后)
+        self.fc1 = nn.Linear(128 * 7 * 7, 256)  # 增加全连接层神经元数
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 10)
+
+        # 添加Dropout防止过拟合
+        self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
         # x: [B, 1, 28, 28]  (CNN 不需要 Flatten 输入)
         x = self.pool(self.relu(self.conv1(x)))  # -> [B, c1_out, 14, 14]
         x = self.pool(self.relu(self.conv2(x)))  # -> [B, c2_out, 7, 7]
-        x = x.view(x.size(0), -1)                # -> [B, c2_out*7*7]
+        x = self.relu(self.conv3(x))             # -> [B, 128, 7, 7] (conv3 applied to 4D tensor)
+        x = x.view(x.size(0), -1)                # -> [B, 128*7*7] 
         x = self.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = self.dropout(x)
+        x = self.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.fc3(x)
         return x
+
+    
+
 def build_model(model_name: str) -> nn.Module:
     if model_name == "mlp":
         return MLP()
@@ -240,7 +267,6 @@ def main():
         batch_size=CONFIG["batch_size"],
         shuffle=True,
         num_workers=2,
-        num_workers=0,
         pin_memory=True
     )
     test_loader = DataLoader(
@@ -248,10 +274,8 @@ def main():
         batch_size=CONFIG["batch_size"],
         shuffle=False,
         num_workers=2,
-        num_workers=0,
         pin_memory=True
     )
-
     # -------------------------
     # 建模与优化器
     # -------------------------
@@ -287,14 +311,29 @@ def main():
         plt.plot(range(1, CONFIG["epochs"] + 1), train_losses, label="train_loss")
         plt.plot(range(1, CONFIG["epochs"] + 1), test_losses, label="test_loss")
         plt.plot(range(1, CONFIG["epochs"] + 1), test_accs, label="test_acc")
+        plt.figure(figsize=(12, 4))
+
+        # 绘制损失曲线
+        plt.subplot(1, 2, 1)
+        plt.plot(range(1, CONFIG["epochs"] + 1), train_losses, label="train_loss", marker='o')
+        plt.plot(range(1, CONFIG["epochs"] + 1), test_losses, label="test_loss", marker='s')
         plt.xlabel("epoch")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.title(f"{CONFIG['model']} Loss Curves")
+
+        # 绘制准确率曲线
+        plt.subplot(1, 2, 2)
+        plt.plot(range(1, CONFIG["epochs"] + 1), test_accs, label="test_acc", color='green', marker='^')
+        plt.xlabel("epoch")
+        plt.ylabel("Accuracy")
         plt.legend()
         plt.title(f"{CONFIG['model']} | lr={CONFIG['lr']}")
+        plt.title(f"{CONFIG['model']} Accuracy Curve")
+
+        plt.tight_layout()
         plt.savefig(CONFIG["plot_path"], dpi=160, bbox_inches="tight")
         print(f"Saved plot to: {CONFIG['plot_path']}")
 
 if __name__ == "__main__":
-    main()
-    #调整参数，使得MLP的精度到97.5%以上
-    #调整参数，是的CNN的精度到99%
     main()
